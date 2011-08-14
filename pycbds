@@ -87,6 +87,7 @@ conversion_filelist = []
 filelist = []
 single_mode = FALSE
 batch_mode = FALSE
+reverse_order = FALSE # Tyranic-Moron Edit - Is used to do what 'manga mode' used to do - reverse the file ordering
 #
 #
 #########
@@ -107,11 +108,13 @@ class GeneralBookFile(object):
         self.base_filename = ""
         self.total_page_number = 0
         self.width_p = width_p
+        self.height_p = height_p # Tyranic-Moron Edit - Moved from just below the first if
+        self.desired_width_p = width_p # Tyranic-Moron Edit - Added to help with resizing
+        self.desired_height_p = height_p # Tyranic-Moron Edit - Added to help with resizing
         self.width_p_set = 0
         self.height_p_set = 0
         if (self.width_p): 
             self.width_p_set = 1
-        self.height_p = height_p
         if (self.height_p):
             self.height_p_set = 1
     #
@@ -212,16 +215,18 @@ thWidth = " + str(THMB_N_DIMENSIONS["width"]) + "\n"
                         os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.number)+1) + "." + self.extension))
                     else: #OK, perhaps we have a single page book.
                         os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  "1" + "." + self.extension))
-        if (not left_to_right): # OK, user wants cbds ordered in manga way.
+        # Begin Tyranic-Moron Edits - This used to be 'manga' mode, but for the vast majority of manga you download
+        # there's no need to reverse the file ordering like this. Anyway, I changed the terminology and output messages around here
+        if (reverse_order): # OK, user wants cbds ordered in reverse.
             #We are going to add an offset to avoid overlaps when renaming files in reverse order.
-            print "Manga mode requested. Reordering images..."
+            print "Reverse order requested. Reordering images..."
             for self.root,  self.dirs,  self.files in os.walk(TMP_PATH + "/" + self.base_filename):
                 self.number_of_files_to_reorder = len(self.files)
                 for self.file in sorted(self.files):
                     self.number = (self.file.split("."))[0]
                     self.new_number = int(self.number) + self.number_of_files_to_reorder
                     os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.new_number)) + "." + self.extension))
-            # Now, we have to revert this offset to leave files in manga order.
+            # Now, we have to revert this offset to leave files in reverse order.
             for self.root,  self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
                 self.number_of_files_to_reorder = len(self.files)
                 for self.file in sorted(self.files):
@@ -229,6 +234,7 @@ thWidth = " + str(THMB_N_DIMENSIONS["width"]) + "\n"
                     self.new_number = 2 * self.number_of_files_to_reorder - int(self.number) + 1
                     os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.new_number)) + "." + self.extension))
             print "Reordering complete."
+        # End Tyranic-Moron Edits
     #
     def convert2cbds(self, output,  quality):
         self.createTempTree()
@@ -348,10 +354,11 @@ class RARfile(GeneralBookFile):
         for self.root, self.dirs, self.files in os.walk(self.original_temp_dir + "/"):
             if (self.files == []): # Original archived file didn't contain images in root directory, it had an internal folder tree instead. We have to reach images depth.
                 continue
-            if ((str((self.files[0])).split("."))[0].isdigit()): #If files have a format of <number>.jpg we have to order them in a special way.
-                self.file_list = sorted(self.files,  lambda x, y: cmp(int((x.split("."))[0]), int((y.split("."))[0])))
-            else:
-                self.file_list = sorted(self.files)
+            # Tyranic-Moron Edit - Commented out these lines. In response to the comment below, uh, no we don't.
+            #if ((str((self.files[0])).split("."))[0].isdigit()): #If files have a format of <number>.jpg we have to order them in a special way.
+            #    self.file_list = sorted(self.files,  lambda x, y: cmp(int((x.split("."))[0]), int((y.split("."))[0])))
+            #else:
+            self.file_list = sorted(self.files)
             for self.file in self.file_list:
                 self.imagetype = ((self.file.split('.'))[-1]).lower() #I use -1 to be sure to handle the right extension in case of filenames with multiples dots.
                 if (not self.imagetype in ALLOWED_IMAGETYPES):
@@ -366,10 +373,27 @@ class RARfile(GeneralBookFile):
                     self.proportion = float(self.iWidth)/float(self.iHeight)
                     print " We have to find out image proportion to keep it."
                     print " Image proportion (W/H) is: " + str(self.proportion)
-                    if (self.width_p_set): 
+                    # Begin Tyranic-Moron Edits - A better way of resizing
+                    # this ensures that the dimensions of the final image don't exceed the DS' abilites to display them
+                    if ((self.width_p_set) and (self.height_p_set)):
+                        print " Desired Width and Height both entered, finding greater dimension."
+                        if (self.iWidth > self.iHeight):
+                            print "  Width greater, calculating new proportional Height."
+                            self.width_p = self.desired_width_p
+                            self.height_p = int(float(self.width_p)/float(self.proportion))
+                        else:
+                            print "  Height greater, calculating new proportional Width."
+                            self.height_p = self.desired_height_p
+                            self.width_p = int(self.height_p*self.proportion)
+                    elif (self.width_p_set): 
+                        print " Desired Width entered, calculating new proportional Height."
+                        self.width_p = self.desired_width_p
                         self.height_p = int(float(self.width_p)/float(self.proportion))
                     elif(self.height_p_set): 
+                        print " Desired Height entered, calculating new proportional Width."
+                        self.height_p = self.desired_height_p
                         self.width_p = int(self.height_p*self.proportion)
+                    # End Tyranic-Moron Edits
                     print " OK, we have it, we can resize images."
                     args = ["convert" ,  os.path.join(self.root, self.file) , "-quality" ,  str(quality) ,  "-resize",  str(self.width_p) + "x" +  str(self.height_p) ,  TMP_PATH +  "/" +  self.base_filename +  "/IMAGE/" +  IMAGE_SEED] 
                     print args
@@ -482,7 +506,9 @@ def print_help():
     print "          -p <provider> ------------> Desired provider for this document (default="+ CbCredits[2] +")"
     print "          --wp <width> -------------> Desired width (height will keep proportion)."
     print "          --hp <height> ------------> Desired height (width will keep proportion)."
-    print "          --lr <0/1> ----------------> Left to right reading (RightToLeft=0,LeftToRight=1, default="+ str(left_to_right) +")"
+    print "          --lr <0/1> ---------------> Left to right reading (RightToLeft=0,LeftToRight=1, default="+ str(left_to_right) +")"
+    # Tyranic-Moron Edit - Added the 'reverse' argument
+    print "          -r -----------------------> Reverse the ordering of the images (Use as last argument if you need it)"
     print "          -h | --help --------------> Print this text."
     print "Single mode and batch mode are exclusive, so they cannot be used at the same time."
     print "\n\nExample:"
@@ -529,9 +555,10 @@ def parse_arguments():
     global filelist
     global single_mode
     global batch_mode
+    global reverse_order  # Tyranic-Moron Edit - Is used to do what 'manga mode' used to do - reverse the file ordering
     
     try:
-        arguments, args = getopt.getopt(sys.argv[1:], "i:o:b:q:v:n:a:p:h",["help", "lr=", "wp=", "hp="])
+        arguments, args = getopt.getopt(sys.argv[1:], "i:o:b:q:v:n:a:p:r:h",["help", "lr=", "wp=", "hp="]) # Tyranic-Moron Edit - Added the 'reverse' argument
     except getopt.error, msg:
         print "Argument parsing error."
         print msg
@@ -546,6 +573,10 @@ def parse_arguments():
         if (token in ["-h", "--help"]):
             print_help()
             sys.exit(0)
+        # Tyranic-Moron Edit - Added parsing for the -r parameter
+        elif token == "-r":
+            reverse_order = TRUE
+            print "Reverse order requested."
         elif token == "-i":
             filelist.append(value)
             if (batch_mode):
