@@ -1,3 +1,33 @@
-Copy into /usr/bin/
+ORIGINAL VERSION
+================
+
+The original version of this script by 'borjalopezm' can be found here: http://code.google.com/p/pycbds/
+
+MODIFICATIONS
+=============
+
+I made manga mode just apply the internal ini setting, rather than reversing the file order of the images.
+You can still reverse the file order with -r, if you need that functionality.
+
+I also improved the resizing algorithm - if you set a maximum size for both dimensions,
+images will be proportionally resized to fit within those maximums.
+
+INSTALLATION
+============
+
+Copy pycbds into /usr/bin/
+
+USAGE
+=====
 
 Parameters can be listed with "pycbds -h"
+
+A basic example:
+
+	pycbds -i /home/user/comic.zip
+
+An example for manga (the settings I use most often):
+
+	pycbds -i /home/user/manga.zip -o /home/user/manga.cbds -n "Manga Name" -a "Author" -p "Source Website" -q 60 --wp 1000 --hp 1000 --lr 0
+	
+For further instruction, the original manual can be found here: http://code.google.com/p/pycbds/wiki/pyCBDS

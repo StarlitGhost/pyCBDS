@@ -374,7 +374,7 @@ class RARfile(GeneralBookFile):
                     print " We have to find out image proportion to keep it."
                     print " Image proportion (W/H) is: " + str(self.proportion)
                     # Begin Tyranic-Moron Edits - A better way of resizing
-                    # this ensures that the dimensions of the final image don't exceed the DS' abilites to display them
+                    # this ensures that the dimensions of the final image fit within the given maximum sizes
                     if ((self.width_p_set) and (self.height_p_set)):
                         print " Desired Width and Height both entered, finding greater dimension."
                         if (self.iWidth > self.iHeight):
