@@ -1,0 +1,643 @@
+#!/usr/bin/env python
+###########################################
+#
+# PYCBDS
+#
+# This tool takes a pdf/cbr/cbz/zip/rar file (or an image directory) and converts it into a CBDS file so you can read it with your NintendoDS.
+#
+# Programmed by: Borja Lopez Montilla
+# email: borjalopezm@gmail.es
+#
+#############################################
+
+
+##########
+# LIBRARIES #
+##########
+import getopt
+import sys
+import os
+import tempfile
+import stat
+import shutil
+import subprocess
+import zipfile
+import PythonMagick
+import glob
+#
+#
+###########
+# CONSTANTS #
+###########
+ALLOWED_FILETYPES = {
+                                "zip": "ZIPfile",
+                                "cbz": "ZIPfile", 
+                                "rar": "RARfile",
+                                "cbr": "RARfile",
+                                "pdf": "PDFfile", 
+                                "dir": "Directory"
+                            }
+ALLOWED_IMAGETYPES = ("png",  "jpg",  "jpeg",  "bmp")
+TMP_PATH = tempfile.gettempdir()
+IMAGE_SEED = "a.jpg"
+SMALL_N_DIMENSIONS = {
+                      "width": 256, 
+                      "height": 180, 
+                      "rotation": 0
+                    }
+SMALL_R_DIMENSIONS = {
+                      "width": 135, 
+                      "height": 192, 
+                      "rotation": 90 #Rightwards.
+                    }
+THMB_N_DIMENSIONS = {
+                      "width": 62, 
+                      "height": 43, 
+                      "rotation": 0
+                    }
+THMB_R_DIMENSIONS = {
+                      "width": 32, 
+                      "height": 46, 
+                      "rotation": 90 #Rightwards.
+                    }
+INIFILE_NAME = "ComicBookDS_book.ini"
+DEFAULT_READING = 1 #RightToLeft=0,LeftToRight=1
+DEFAULT_VERSION = 1
+PYCBDS_AUTHOR = "Borja Lopez Montilla"
+TRUE = 1
+FALSE = 0
+#
+#
+################
+# GLOBAL VARIABLES #
+################
+#input_file = ""
+output_file = None
+#filetype = ""
+InputObject = None
+quality = 75
+width = 836
+height = 590
+desired_width_p = 0
+desired_height_p = 0
+CbCredits = ["ComicBook", "Anonymous", "none"]
+left_to_right = DEFAULT_READING
+version = DEFAULT_VERSION
+conversion_filelist = []
+filelist = []
+single_mode = FALSE
+batch_mode = FALSE
+#
+#
+#########
+# CLASSES #
+#########
+class GeneralBookFile(object):
+    #Constructor.
+    def __init__(self, filename, CbCredits=["", "", ""], left_to_right=DEFAULT_READING, version=DEFAULT_VERSION, width_p = 0,  height_p = 0):
+        self.FileObject = filename
+        self.iSize = 0
+        self.iSize = (os.stat(filename))[stat.ST_SIZE]
+        self.iWidth = 0
+        self.iHeight = 0
+        self.CbCredits = CbCredits
+        self.left_to_right = left_to_right
+        self.version = version
+        self.temp_dir = ""
+        self.base_filename = ""
+        self.total_page_number = 0
+        self.width_p = width_p
+        self.width_p_set = 0
+        self.height_p_set = 0
+        if (self.width_p): 
+            self.width_p_set = 1
+        self.height_p = height_p
+        if (self.height_p):
+            self.height_p_set = 1
+    #
+    def createTempTree(self):
+        self.temp_dir = tempfile.mkdtemp(dir=TMP_PATH)
+        self.base_filename = (os.path.split(self.temp_dir))[1]
+        print "Creating temp dir in: " + TMP_PATH + "/" + self.base_filename
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/IMAGE")
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/NAME")
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/SMALL_N")
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/SMALL_R")
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/THMB_N")
+        os.mkdir(TMP_PATH + "/" + self.base_filename + "/THMB_R")
+    #
+    def removeTempTree(self):
+        print "Deleting temp dir in: " + TMP_PATH + "/" + self.base_filename
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+            for self.file in self.files:
+                os.remove(os.path.join(self.root, self.file))
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+            for self.dir in self.dirs:
+                os.rmdir(os.path.join(self.root, self.dir))
+        os.rmdir(TMP_PATH + "/" + self.base_filename)
+    #
+    def populateName(self):
+        print "Populating NAME directory..."
+        self.total_page_number = len(os.listdir(TMP_PATH + "/" + self.base_filename + "/IMAGE/"))
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename + "/IMAGE/"):
+            for self.file in self.files:
+                self.number = (self.file.split("."))[0]
+                if (not self.number.isdigit()):
+                    self.number = (self.number.split("-"))[-1]
+                    self.created_file_name = self.number[0] + ".txt"
+                else:
+                    self.created_file_name = self.number + ".txt"
+                self.created_file = open(TMP_PATH + "/" + self.base_filename + "/NAME/" + self.created_file_name,  'w')
+                self.created_file.write(os.path.split(self.FileObject)[1] + " page " + str(int(self.number))  + " of " + str(self.total_page_number))
+                self.created_file.close()
+    #
+    def createConfigFile(self,  quality):
+        print "Creating configuration file..."
+        config_text = "; ComicBookDS ini file \n\
+; CBDS file created with pyCBDS (programmed by " + PYCBDS_AUTHOR +") \n\
+; 1st line displayed in the credits (usually the ComicBook name) \n\
+CbCredits1 = " + self.CbCredits[0] + "\n\
+; 2nd line displayed in the credits (usually the ComicBook author) \n\
+CbCredits2 = " + self.CbCredits[1] + "\n\
+; 3rd line displayed in the credits (usually the ComicBook provider) \n\
+CbCredits3 = " + self.CbCredits[2] + "\n\
+; Left To Right reading mode [RightToLeft=0,LeftToRight=1] \n\
+LeftToRight = " + str(self.left_to_right) + " \n\
+; The number of pages contained in this comic book \n\
+NbPages = " + str(self.total_page_number) + " \n\
+; The compatibility version of this comic book \n\
+Version = " + str(self.version) + "\n\
+iHeight = " + str(self.iHeight) + "\n\
+iQuality = " + str(quality) + "\n\
+iSize = " + str(self.iSize) + "\n\
+iWidth = " + str(self.iWidth) + "\n\
+oHeight = " + str(SMALL_R_DIMENSIONS["height"]) + "\n\
+oQuality = " + str(quality) + "\n\
+oSize = 0\n\
+oWidth = " + str(SMALL_N_DIMENSIONS["width"]) + "\n\
+thHeight = " + str(THMB_R_DIMENSIONS["height"]) + "\n\
+thQuality = " + str(quality) + "\n\
+thSize = 0\n\
+thWidth = " + str(THMB_N_DIMENSIONS["width"]) + "\n"
+        self.created_file = open(TMP_PATH + "/" + self.base_filename + "/" + INIFILE_NAME,  'w')
+        self.created_file.write(config_text)
+        self.created_file.close()
+    #
+    def compressTree(self,  output):
+        self.ZippedFile = zipfile.ZipFile(output, 'w')
+        print "Packing files..."
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+            for self.file in self.files:
+                self.path_elements = (os.path.join(self.root, self.file)).split("/")
+                self.base_index = self.path_elements.index(self.base_filename)
+                self.relative_filename = ""
+                for self.element in self.path_elements[self.base_index+1:]:
+                    self.relative_filename = os.path.join(self.relative_filename,  self.element)
+                self.ZippedFile.write(os.path.join(self.root, self.file),  self.relative_filename)
+        self.ZippedFile.close()
+    #
+    def renameImages(self):
+        #Some versions of convert leaves files in a a.jpg.<number> format. We have to rename files to <number>.jpg format.
+        print "Renaming files..."
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+            for self.file in sorted(self.files):
+                self.number = (self.file.split("."))[-1]
+                if self.number.isdigit():
+                    self.extension =  (self.file.split("."))[-2]
+                    os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.number)+1) + "." + self.extension))
+                else: # Convert left it with a-<number>.jpg
+                    self.extension = self.number
+                    self.number = (((self.file.split("."))[0]).split("-"))[-1]
+                    if self.number.isdigit():
+                        os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.number)+1) + "." + self.extension))
+                    else: #OK, perhaps we have a single page book.
+                        os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  "1" + "." + self.extension))
+        if (not left_to_right): # OK, user wants cbds ordered in manga way.
+            #We are going to add an offset to avoid overlaps when renaming files in reverse order.
+            print "Manga mode requested. Reordering images..."
+            for self.root,  self.dirs,  self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+                self.number_of_files_to_reorder = len(self.files)
+                for self.file in sorted(self.files):
+                    self.number = (self.file.split("."))[0]
+                    self.new_number = int(self.number) + self.number_of_files_to_reorder
+                    os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.new_number)) + "." + self.extension))
+            # Now, we have to revert this offset to leave files in manga order.
+            for self.root,  self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename):
+                self.number_of_files_to_reorder = len(self.files)
+                for self.file in sorted(self.files):
+                    self.number = (self.file.split("."))[0]
+                    self.new_number = 2 * self.number_of_files_to_reorder - int(self.number) + 1
+                    os.rename(os.path.join(self.root,  self.file), os.path.join(self.root,  str(int(self.new_number)) + "." + self.extension))
+            print "Reordering complete."
+    #
+    def convert2cbds(self, output,  quality):
+        self.createTempTree()
+        # We render each pdf page into an image file of the proper size.
+        print "Page conversion starts... " 
+        print "     (Be aware that depending on document size this part can be long. Please, be patient...)"
+        self.populateImageDirectories(quality)
+        print "Page conversion ended."
+        # Convert leaves files in a a.jpg.<number> format. We have to rename files to <number>.jpg format.
+        self.renameImages()
+        # Now, we have to populate NAME directory.
+        self.populateName()
+        # It's time to create ComicBookDS_book.ini file.
+        self.createConfigFile(quality)
+        # With compression we end our cbds.
+        self.compressTree(output)
+        # It's time to erase our footprint.
+        self.removeTempTree() 
+#   
+class PDFfile(GeneralBookFile):
+    #
+    def populateImageDirectories(self, quality):
+        #
+        args = ["convert", self.FileObject,  "-quality",  str(quality) ,  TMP_PATH + "/" +  self.base_filename  + "/IMAGE/" +  IMAGE_SEED]
+        print args
+        subprocess.call(args)
+        self.iWidth = 0
+        self.iHeight = 0
+        # We get Width and Heigth from the biggest converted image.
+        for self.root, self.dirs, self.files in os.walk(TMP_PATH + "/" + self.base_filename+ "/IMAGE/"):
+            for self.file in self.files:
+                ConvertedImage = PythonMagick.Image(os.path.join(self.root, self.file))
+                self.iwidth = ConvertedImage.baseColumns()
+                self.iheight = ConvertedImage.baseRows()
+                if self.iwidth > self.iWidth:
+                    self.iWidth = self.iwidth
+                if self.iheight > self.iHeight:
+                    self.iHeight = self.iheight
+        if ((self.width_p_set) or (self.height_p_set)): # If  user set width or height we have to find out image proportion to keep it.
+            self.proportion = float(self.iWidth)/float(self.iHeight)
+            print " We have to find out image proportion to keep it."
+            print " Image proportion (W/H) is: " + str(self.proportion)
+            if (self.width_p_set): 
+                self.height_p = int(float(self.width_p)/float(self.proportion))
+            elif (self.height_p_set): 
+                self.width_p = int(self.height_p*self.proportion)
+            print " OK, we have it, we can resize images."
+            args = ["convert" ,  self.FileObject ,  "-quality" ,  str(quality) , "-resize",  str(self.width_p)  +  "x" +  str(self.height_p) ,  TMP_PATH +  "/" +  self.base_filename +  "/IMAGE/" +  IMAGE_SEED]
+            print args
+            subprocess.call(args)
+        #
+        args = ["convert" ,  self.FileObject ,  "-quality" ,  str(quality) ,  "-resize",  str(SMALL_N_DIMENSIONS["width"]) +  "x" +  str(SMALL_N_DIMENSIONS["height"]) , TMP_PATH +  "/" +  self.base_filename +  "/SMALL_N/" +  IMAGE_SEED]
+        print args
+        subprocess.call(args)
+        #
+        args = ["convert" ,  self.FileObject ,  "-quality" ,  str(quality) ,  "-resize",  str(SMALL_R_DIMENSIONS["width"]) +  "x" +  str(SMALL_R_DIMENSIONS["height"]) ,  "-rotate" ,  str(SMALL_R_DIMENSIONS["rotation"]) ,  TMP_PATH + "/" +  self.base_filename + "/SMALL_R/" +  IMAGE_SEED]
+        print args
+        subprocess.call(args)
+        #
+        #
+        args = ["convert" ,  self.FileObject ,  "-quality" ,  str(quality) ,  "-resize",  str(THMB_N_DIMENSIONS["width"]) +  "x" +  str(THMB_N_DIMENSIONS["height"]) ,  TMP_PATH +  "/" +  self.base_filename +  "/THMB_N/" +  IMAGE_SEED]
+        print args
+        subprocess.call(args)
+        #
+        args = ["convert" ,  self.FileObject ,  "-quality" ,  str(quality) ,  "-resize",  str(THMB_R_DIMENSIONS["width"]) +  "x" + str(THMB_R_DIMENSIONS["height"]) ,  "-rotate" ,  str(THMB_R_DIMENSIONS["rotation"]) ,  TMP_PATH +  "/" +  self.base_filename +  "/THMB_R/" + IMAGE_SEED]
+        print args
+        subprocess.call(args)
+
+#
+class RARfile(GeneralBookFile):
+    #
+    def uncompressOriginal(self):
+        print "Uncompressing original to temp directory..."
+        self.original_temp_dir = tempfile.mkdtemp(dir=TMP_PATH)
+        subprocess.call(["unrar","e",  self.FileObject,  self.original_temp_dir])
+        self.normalize_names(self.original_temp_dir + "/")
+    #
+    def normalize_names(self, directory):
+        #Some characters give problems when used in names, so I replace then.
+        for self.root, self.dirs, self.files in os.walk(directory):
+            for self.dir in self.dirs:
+                try:
+                    if (self.dir.index(' ')  or self.dir.index(')') or self.dir.index('(')):
+                        self.new_dirname = self.dir
+                        self.new_dirname = self.new_dirname.replace(' ', '_')
+                        self.new_dirname = self.new_dirname.replace('(', '_')
+                        self.new_dirname = self.new_dirname.replace(')', '_')
+                        shutil.move(os.path.join(self.root,self.dir), os.path.join(self.root,  self.new_dirname))
+                        print "Changed dir name: " + self.dir + " for a compatible one: " + self.new_dirname
+                except:
+                    continue
+        for self.root, self.dirs, self.files in os.walk(directory):
+            for self.file in self.files:
+                try:
+                    if (self.file.index(' ') or self.file.index(')') or self.file.index('(')):
+                        self.new_filename = self.file
+                        self.new_filename = self.new_filename.replace(' ', '_')
+                        self.new_filename = self.new_filename.replace('(', '_')
+                        self.new_filename = self.new_filename.replace(')', '_')
+                        shutil.move(os.path.join(self.root,self.file), os.path.join(self.root,  self.new_filename))
+                        print "Changed file name: " + self.file + " for a compatible one: " + self.new_filename
+                except:
+                    continue
+    #
+    def removeUncompressedOriginal(self):
+        print "Deleting original uncompressed temp dir in: " + self.original_temp_dir
+        for self.root, self.dirs, self.files in os.walk(self.original_temp_dir):
+            for self.file in self.files:
+                os.remove(os.path.join(self.root, self.file))
+            for self.dir in self.dirs:
+                os.rmdir(os.path.join(self.root, self.dir))
+        os.rmdir(self.original_temp_dir)
+    #
+    def populateImageDirectories(self,  quality):
+        #
+        self.index = 0
+        for self.root, self.dirs, self.files in os.walk(self.original_temp_dir + "/"):
+            if (self.files == []): # Original archived file didn't contain images in root directory, it had an internal folder tree instead. We have to reach images depth.
+                continue
+            if ((str((self.files[0])).split("."))[0].isdigit()): #If files have a format of <number>.jpg we have to order them in a special way.
+                self.file_list = sorted(self.files,  lambda x, y: cmp(int((x.split("."))[0]), int((y.split("."))[0])))
+            else:
+                self.file_list = sorted(self.files)
+            for self.file in self.file_list:
+                self.imagetype = ((self.file.split('.'))[-1]).lower() #I use -1 to be sure to handle the right extension in case of filenames with multiples dots.
+                if (not self.imagetype in ALLOWED_IMAGETYPES):
+                    print "Error with: " + self.file
+                    print_error(4) 
+                    continue
+                # We get Width and Heigth from the very first converted image.
+                ConvertedImage = PythonMagick.Image(os.path.join(self.root, self.file))
+                self.iWidth = ConvertedImage.baseColumns()
+                self.iHeight = ConvertedImage.baseRows()
+                if ((self.width_p_set) or (self.height_p_set)): # If  user set width or height we have to find out image proportion to keep it.
+                    self.proportion = float(self.iWidth)/float(self.iHeight)
+                    print " We have to find out image proportion to keep it."
+                    print " Image proportion (W/H) is: " + str(self.proportion)
+                    if (self.width_p_set): 
+                        self.height_p = int(float(self.width_p)/float(self.proportion))
+                    elif(self.height_p_set): 
+                        self.width_p = int(self.height_p*self.proportion)
+                    print " OK, we have it, we can resize images."
+                    args = ["convert" ,  os.path.join(self.root, self.file) , "-quality" ,  str(quality) ,  "-resize",  str(self.width_p) + "x" +  str(self.height_p) ,  TMP_PATH +  "/" +  self.base_filename +  "/IMAGE/" +  IMAGE_SEED] 
+                    print args
+                    subprocess.call(args)
+                    os.rename(TMP_PATH + "/" + self.base_filename + "/IMAGE/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/IMAGE/" + IMAGE_SEED + "." + str(self.index))
+                else:
+                    args = ["convert" ,  os.path.join(self.root, self.file) ,  "-quality" ,  str(quality) ,  TMP_PATH + "/" +  self.base_filename +  "/IMAGE/" +  IMAGE_SEED]
+                    print args
+                    subprocess.call(args)
+                    os.rename(TMP_PATH + "/" + self.base_filename + "/IMAGE/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/IMAGE/" + IMAGE_SEED + "." + str(self.index))
+                args = ["convert" ,  os.path.join(self.root, self.file) ,  "-quality" ,  str(quality) ,  "-resize",  str(SMALL_N_DIMENSIONS["width"]) + "x" +  str(SMALL_N_DIMENSIONS["height"]),  TMP_PATH+  "/"+  self.base_filename+  "/SMALL_N/"+  IMAGE_SEED]
+                print args
+                subprocess.call(args)
+                os.rename(TMP_PATH + "/" + self.base_filename + "/SMALL_N/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/SMALL_N/" + IMAGE_SEED + "." + str(self.index))
+                args = ["convert",  os.path.join(self.root, self.file),  "-quality",  str(quality),  "-resize",  str(SMALL_R_DIMENSIONS["width"])+  "x"+  str(SMALL_R_DIMENSIONS["height"]),  "-rotate",  str(SMALL_R_DIMENSIONS["rotation"]),  TMP_PATH+  "/"+  self.base_filename+  "/SMALL_R/"+ IMAGE_SEED]
+                print args
+                subprocess.call(args)
+                os.rename(TMP_PATH + "/" + self.base_filename + "/SMALL_R/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/SMALL_R/" + IMAGE_SEED + "." + str(self.index))
+                args = ["convert",  os.path.join(self.root, self.file),  "-quality",  str(quality),  "-resize",  str(THMB_N_DIMENSIONS["width"])+  "x"+  str(THMB_N_DIMENSIONS["height"]),  TMP_PATH+ "/"+  self.base_filename+ "/THMB_N/"+  IMAGE_SEED]
+                print args
+                subprocess.call(args)
+                os.rename(TMP_PATH + "/" + self.base_filename + "/THMB_N/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/THMB_N/" + IMAGE_SEED + "." + str(self.index))
+                args = ["convert",  os.path.join(self.root, self.file) , "-quality",  str(quality) , "-resize",  str(THMB_R_DIMENSIONS["width"])+ "x"+  str(THMB_R_DIMENSIONS["height"]) ,  "-rotate",  str(THMB_R_DIMENSIONS["rotation"]),  TMP_PATH+ "/"+  self.base_filename + "/THMB_R/"+ IMAGE_SEED]
+                print args
+                subprocess.call(args)
+                os.rename(TMP_PATH + "/" + self.base_filename + "/THMB_R/" + IMAGE_SEED, TMP_PATH + "/" + self.base_filename + "/THMB_R/" + IMAGE_SEED + "." + str(self.index))
+                self.index = self.index + 1
+    #
+    def convert2cbds(self, output,  quality):
+        self.uncompressOriginal()
+        GeneralBookFile.convert2cbds(self,  output, quality)
+        self.removeUncompressedOriginal()
+#
+class ZIPfile(RARfile):
+    #
+    def uncompressOriginal(self):
+        print "Uncompressing original to temp directory..."
+        self.original_temp_dir = tempfile.mkdtemp(dir=TMP_PATH)
+        subprocess.call(["unzip",  self.FileObject, "-d",  self.original_temp_dir])
+        self.normalize_names(self.original_temp_dir + "/")
+    #
+    
+class Directory(RARfile):
+    #
+    def uncompressOriginal(self):
+        print "Uncompressing original to temp directory..."
+        self.original_temp_dir = tempfile.mkdtemp(dir=TMP_PATH)
+        # I might perform conversion from original directory but I prefer converting from a temp dir.
+        for image_file in os.listdir(self.FileObject):
+            shutil.copy(os.path.join(self.FileObject,  image_file),  self.original_temp_dir)
+        self.normalize_names(self.original_temp_dir + "/")
+#
+class File2Convert(object):
+    filename = ""
+    filetype = ""
+    output = ""
+    #
+    def __init__(self, file):
+        if (not os.path.exists(file)):
+            print_error(2)
+            sys.exit(2)
+        if (os.path.isdir(file)):
+            self.filetype = "dir"
+            if (output_file == None):
+                self.output = file + ".cbds"
+            else:
+                if (batch_mode):
+                    relative_filename = file[file.rfind('/')+1:]
+                    self.output = os.path.join(output_file,  relative_filename + ".cbds")
+                else:
+                    self.output = output_file
+        else:
+            self.filetype = ((file.split('.'))[-1]).lower() #I use -1 to be sure to handle the right extension in case of filenames with multiples dots.
+            extension_length = len(self.filetype)
+            if (output_file == None):
+                self.output = file[:-extension_length] + "cbds"
+            else:
+                if (batch_mode):
+                    relative_filename = file[file.rfind('/')+1:]
+                    new_filename = relative_filename[:-extension_length] + "cbds"
+                    self.output = os.path.join(output_file,  new_filename)
+                else:
+                    self.output = output_file
+        if (not ALLOWED_FILETYPES.has_key(self.filetype)):
+            print_error(1) 
+            self.filetype = "unsupported"
+        self.filename = file
+
+#
+#
+###########
+# FUNCTIONS #
+###########
+#
+# Help message.
+def print_help():
+    print "\nPYCBDS"
+    print "======"
+    print "Programmed by: Borja Lopez Montilla"
+    print "\nThis tool takes a pdf/cbr/cbz/zip/rar file (or an image directory) and converts it into a CBDS file so you can read it with your NintendoDS."
+    print "\n   Format " + sys.argv[0]+ " <arguments>"
+    print "     (* means mandatory argument)"
+    print "*         -i <input file> ----------> File to convert or directory (single mode)."
+    print "          -o <output file> ---------> File or directory where you want to store output."
+    print "*         -b <directory> -----------> Converts every file located in directory (batch mode)."
+    print "          -q <0-100> ---------------> Quality conversion (default="+ str(quality) +")"
+    print "          -v <version> -------------> Desired version for this document (default="+ str(version) +")"
+    print "          -n <document name> -------> Desired name for this document (default="+ CbCredits[0] +")"
+    print "          -a <author> --------------> Desired author for this document (default="+ CbCredits[1] +")"
+    print "          -p <provider> ------------> Desired provider for this document (default="+ CbCredits[2] +")"
+    print "          --wp <width> -------------> Desired width (height will keep proportion)."
+    print "          --hp <height> ------------> Desired height (width will keep proportion)."
+    print "          --lr <0/1> ----------------> Left to right reading (RightToLeft=0,LeftToRight=1, default="+ str(left_to_right) +")"
+    print "          -h | --help --------------> Print this text."
+    print "Single mode and batch mode are exclusive, so they cannot be used at the same time."
+    print "\n\nExample:"
+    print " " + sys.argv[0] + " -i /home/borja/book.pdf -o /home/borja/book.cbds\n"
+
+#
+# Error messages
+def print_error(error):
+    messages = {
+        1: "File extension not identified as a supported one.", 
+        2: "Input file doesn't exists.", 
+        3: "--lr parameter can be either 0 or 1 only. Entered value is not valid.", 
+        4: "Image extension not among the supported one. Skipping...", 
+        5: "-q parameter is not a number.", 
+        6: "--wp parameter is not a number.", 
+        7: "--hp parameter is not a number.", 
+        8: "Single mode and batch mode are exclusive, so -i and -b parameters cannot be used at the same time.", 
+        9: "-b parameter is not a directory"
+    }
+    print "ERROR: " + messages[error]
+
+#
+# This function creates a dictionary with filenames to convert and its filetype.
+def create_conversion_filelist():
+    global conversion_filelist    
+    for file in filelist:
+        if ((output_file != None) and ((os.path.abspath(output_file)).find(os.path.abspath(file)) != -1)):
+            continue
+        file_to_convert = File2Convert(file)
+        conversion_filelist.append(file_to_convert)
+
+#
+#Argument parsing
+def parse_arguments():
+    global input_file
+    global output_file
+    global filetype
+    global quality
+    global CbCredits
+    global version
+    global left_to_right
+    global desired_height_p
+    global desired_width_p
+    global filelist
+    global single_mode
+    global batch_mode
+    
+    try:
+        arguments, args = getopt.getopt(sys.argv[1:], "i:o:b:q:v:n:a:p:h",["help", "lr=", "wp=", "hp="])
+    except getopt.error, msg:
+        print "Argument parsing error."
+        print msg
+        sys.exit(2)
+        
+    #Empty string of arguments means user has no idea about how to use our program, so we display help.
+    if (len(arguments) == 0):
+        print_help()
+        sys.exit(0)
+            
+    for token, value in arguments:
+        if (token in ["-h", "--help"]):
+            print_help()
+            sys.exit(0)
+        elif token == "-i":
+            filelist.append(value)
+            if (batch_mode):
+                print_error(8)
+                sys.exit(2)
+            else:
+                single_mode = TRUE
+        elif token == "-b":
+            batch_mode = TRUE
+            if (single_mode):
+                print_error(8)
+                sys.exit(2)
+            if (os.path.isdir(value)):
+                filelist = glob.glob(os.path.abspath(value) + "/*")
+            else:
+                print_error(9)
+                sys.exit(2)
+        elif token == "-o":
+            output_file = value
+        elif token == "-q":
+            if (not value.isdigit()):
+                print_error(5)
+                sys.exit(2)
+            quality = int(value)
+            if (quality < 0):
+                quality = 0
+            elif (quality > 100):
+                quality = 100
+            print "Quality: " + str(quality)
+        elif token == "-v":
+            version = value
+            print "Desired version: " + version
+        elif token == "-n":
+            CbCredits[0] = value
+            print "Desired name for document: " + CbCredits[0]
+        elif token == "-a":
+            CbCredits[1] = value
+            print "Desired author for document: " + CbCredits[1]
+        elif token == "-p":
+            CbCredits[2] = value
+            print "Desired provider for document: " + CbCredits[2]
+        elif token == "--lr":
+            left_to_right = int(value)
+            if (left_to_right == 1):
+                print "Left to right reading requested."
+            elif (left_to_right == 0):
+                print "Right to left reading requested."
+            else:
+                print_error(3)
+                sys.exit(2)
+        elif token == "--wp":
+            desired_width_p = value
+            if (not desired_width_p.isdigit()):
+                print_error(6)
+                sys.exit(2)
+            desired_width_p = int(desired_width_p)
+        elif token == "--hp":
+            desired_height_p = value
+            if (not desired_height_p.isdigit()):
+                print_error(7)
+                sys.exit(2)
+            desired_height_p =  int(desired_height_p)
+        else:
+            print "Unexpected argument " + token + ", please read help (" +sys.argv[0]+ " --help )"
+            sys.exit(2)
+
+#
+#
+###############################################################################
+# MAIN PROGRAM
+###############################################################################
+parse_arguments()
+create_conversion_filelist()
+for input_file in conversion_filelist:
+    print "File to convert: " + input_file.filename
+    print "Filetype: " + input_file.filetype
+    if (input_file.filetype == "unsupported"):
+        continue
+    if (ALLOWED_FILETYPES[input_file.filetype] == "PDFfile"):
+        InputObject = PDFfile(input_file.filename,  CbCredits, left_to_right,  version, desired_width_p, desired_height_p)
+    elif (ALLOWED_FILETYPES[input_file.filetype] == "RARfile"):
+        InputObject = RARfile(input_file.filename,  CbCredits, left_to_right,  version, desired_width_p, desired_height_p)
+    elif (ALLOWED_FILETYPES[input_file.filetype] == "ZIPfile"):
+        InputObject = ZIPfile(input_file.filename,  CbCredits, left_to_right,  version,  desired_width_p, desired_height_p)
+    elif(ALLOWED_FILETYPES[input_file.filetype] == "Directory"):
+        InputObject = Directory(input_file.filename,  CbCredits, left_to_right,  version,  desired_width_p, desired_height_p)
+    if (not input_file.output == None):
+        print "Output file: " + input_file.output
+    if (batch_mode and  output_file):
+        if (not os.path.exists(output_file)):
+            os.makedirs(output_file)
+    InputObject.convert2cbds(input_file.output, quality)
+    print "Done."
+print "All conversions done."
+print "Have a nice day!"
